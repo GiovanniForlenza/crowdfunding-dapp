@@ -76,7 +76,7 @@ contract Crowdfunding is ReentrancyGuard {
         Campaign storage c = campaigns[_id];
 
         require(msg.sender == c.creator, "Solo il creatore puo ritirare i fondi");
-        require(block.timestamp >= c.deadline, "Campagna ancora attica");
+        require(block.timestamp >= c.deadline, "Campagna ancora attiva");
         require(c.raised >= c.goal, "Obiettivo non raggiunto");
         require(!c.claimned, "Fondi gia ritirati");
 
