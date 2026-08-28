@@ -1,64 +1,71 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
-const {time} = require("@nomicfoundation/hardhat-network-helpers");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("Crowdfunding", function () {
-    let crowdfunding, creator, person1, person2;
-    const GOAL = ethers.parseEther("10");
-    const DURATION = 7 * 24 * 60 * 60; // 7 days in seconds
+  let crowdfunding, creator, alice, bob;
+  const GOAL = ethers.parseEther("10");   // obiettivo: 10 ETH
+  const DURATION = 60 * 60 * 24 * 7;       // 7 giorni
 
-    beforeEach(async function () {
-        [creator, person1, person2] = await ethers.getSigners();
-        const Crowdfunding = await ethers.getContractFactory("Crowdfunding");
-        crowdfunding = await Crowdfunding.deploy();
-        await crowdfunding.connect(creator).createCampaign(GOAL, DURATION);
-    });
+  beforeEach(async function () {
+    [creator, alice, bob] = await ethers.getSigners();
+    const Factory = await ethers.getContractFactory("Crowdfunding");
+    crowdfunding = await Factory.deploy();
+    // il creatore lancia la campagna 0
+    await crowdfunding.connect(creator).createCampaign(GOAL, DURATION, "Campagna test", "Descrizione di prova");
+  });
 
-    it("registra correttamente un contributo", async function () {
-        await crowdfunding.connect(person1).contribute(0, {value: ethers.parseEther("3")});
-        const c = await crowdfunding.campaigns(0);
-        expect(c.raised).to.equal(ethers.parseEther("3"));
-        expect(await crowdfunding.contributions(0, person1.address)).to.equal(ethers.parseEther("3"));
-    });
+  it("registra correttamente un contributo", async function () {
+    await crowdfunding.connect(alice).contribute(0, { value: ethers.parseEther("3") });
+    const c = await crowdfunding.campaigns(0);
+    expect(c.raised).to.equal(ethers.parseEther("3"));
+    expect(await crowdfunding.contributions(0, alice.address)).to.equal(ethers.parseEther("3"));
+  });
 
-    it("obiettivo raggiunto e prelievo del creatore", async function () {
-        await crowdfunding.connect(person1).contribute(0, {value: ethers.parseEther("6")});
-        await crowdfunding.connect(person2).contribute(0, {value: ethers.parseEther("5")});
-        
-        await time.increase(DURATION + 1); // Avanza il tempo oltre la durata della campagna
+  it("SCENARIO SUCCESSO: obiettivo raggiunto -> il creatore preleva", async function () {
+    await crowdfunding.connect(alice).contribute(0, { value: ethers.parseEther("6") });
+    await crowdfunding.connect(bob).contribute(0,   { value: ethers.parseEther("5") }); // tot 11 >= 10
 
-        await expect(crowdfunding.connect(creator).withdraw(0)).to.changeEtherBalance(creator, ethers.parseEther("11"));
-        const c = await crowdfunding.campaigns(0);
-        expect(c[4]).to.equal(true);
-    });
+    await time.increase(DURATION + 1); // "viaggio nel tempo": campagna scaduta
 
-    it("obiettivo non raggiunto e rimborso dei contributori", async function () {
-        await crowdfunding.connect(person1).contribute(0, {value: ethers.parseEther("3")});
-        await crowdfunding.connect(person2).contribute(0, {value: ethers.parseEther("4")});
+    // il prelievo va a buon fine e sposta 11 ETH al creatore
+    await expect(crowdfunding.connect(creator).withdraw(0))
+      .to.changeEtherBalance(creator, ethers.parseEther("11"));
 
-        await time.increase(DURATION + 1); 
+    const c = await crowdfunding.campaigns(0);
+    expect(c.claimed).to.equal(true);
+  });
 
-        await expect(crowdfunding.connect(person1).refund(0)).to.changeEtherBalance(person1, ethers.parseEther("3"));
-        await expect(crowdfunding.connect(person2).refund(0)).to.changeEtherBalance(person2, ethers.parseEther("4"));
-    
-        await expect(crowdfunding.connect(person1).refund(0)).to.be.revertedWith("Nessun contributo da rimborsare");
-    });
+  it("SCENARIO FALLIMENTO: obiettivo non raggiunto -> rimborso ai contributori", async function () {
+    await crowdfunding.connect(alice).contribute(0, { value: ethers.parseEther("4") }); // < 10
 
-    it("solo il creatore puo prelevare fondi", async function(){
-        await crowdfunding.connect(person1).contribute(0, {value: ethers.parseEther("11")});
-        await time.increase(DURATION + 1);
-        await expect(crowdfunding.connect(person1).withdraw(0)).to.be.revertedWith("Solo il creatore puo ritirare i fondi");
-    });
+    await time.increase(DURATION + 1);
 
-    it("non si puo prelevare prima della scadenza", async function(){
-        await crowdfunding.connect(person1).contribute(0, {value: ethers.parseEther("11")});
-        await expect(crowdfunding.connect(creator).withdraw(0)).to.be.revertedWith("Campagna ancora attiva");
-    });
+    // alice riprende esattamente i suoi 4 ETH
+    await expect(crowdfunding.connect(alice).refund(0))
+      .to.changeEtherBalance(alice, ethers.parseEther("4"));
 
-    it("non si puo contribuire dopo la scadenza", async function(){
-        await crowdfunding.connect(person1).contribute(0, {value: ethers.parseEther("5")});
-        await time.increase(DURATION + 1);
-        await expect(crowdfunding.connect(person2).contribute(0, {value: ethers.parseEther("5")})).to.be.revertedWith("Campagna scaduta");
-    });   
+    // non puo' farsi rimborsare due volte
+    await expect(crowdfunding.connect(alice).refund(0))
+      .to.be.revertedWith("Nessun contributo da rimborsare");
+  });
 
+  it("ACCESS CONTROL: solo il creatore puo' prelevare", async function () {
+    await crowdfunding.connect(alice).contribute(0, { value: ethers.parseEther("11") });
+    await time.increase(DURATION + 1);
+    await expect(crowdfunding.connect(alice).withdraw(0))
+      .to.be.revertedWith("Solo il creatore");
+  });
+
+  it("non si puo' prelevare prima della scadenza", async function () {
+    await crowdfunding.connect(alice).contribute(0, { value: ethers.parseEther("11") });
+    await expect(crowdfunding.connect(creator).withdraw(0))
+      .to.be.revertedWith("Campagna ancora attiva");
+  });
+
+  it("non si puo' contribuire dopo la scadenza", async function () {
+    await time.increase(DURATION + 1);
+    await expect(crowdfunding.connect(alice).contribute(0, { value: ethers.parseEther("1") }))
+      .to.be.revertedWith("Campagna scaduta");
+  });
 });
