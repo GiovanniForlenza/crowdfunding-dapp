@@ -4,6 +4,8 @@ import * as chain from "./blockchain";
 import { campaignStatus, shortAddress } from "./utils";
 import CampaignCard from "./components/CampaignCard";
 import CreateCampaignForm from "./components/CreateCampaignForm";
+import Toast from "./components/Toast";
+import Activity from "./components/Activity";
 
 export default function App() {
   const [account, setAccount] = useState(null);
@@ -11,12 +13,25 @@ export default function App() {
   const [tab, setTab] = useState("active"); // active | concluded | mine
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [toasts, setToasts] = useState([]);
+  const [activity, setActivity] = useState([]);
+
+  function showToast(message, type = "success") {
+    //const start = Date.now();
+    const id = Date.now() + Math.random();
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3000);
+  }
 
   const refresh = useCallback(async (acc) => {
     try {
       setLoading(true);
       const list = await chain.loadCampaigns(acc);
       setCampaigns(list);
+      const acts = await chain.loadActivity();
+      setActivity(acts);
     } catch (err) {
       console.error(err);
     } finally {
@@ -68,24 +83,25 @@ export default function App() {
     setTab("active");
   }
 
-  async function runTx(fn) {
+  async function runTx(fn, successMsg) {
     try {
       setBusy(true);
       await fn();
       await refresh(account);
+      showToast(successMsg, "success");
     } catch (err) {
       console.error(err);
-      alert("Errore: " + (err.reason || err.shortMessage || err.message));
+      showToast("Errore: " + (err.reason || err.shortMessage || err.message), "error");
     } finally {
       setBusy(false);
     }
   }
 
   const handleCreate = (data) =>
-    runTx(() => chain.createCampaign(data.goalEth, data.durationSeconds, data.title, data.description));
-  const handleContribute = (id, amount) => runTx(() => chain.contribute(id, amount));
-  const handleWithdraw = (id) => runTx(() => chain.withdraw(id));
-  const handleRefund = (id) => runTx(() => chain.refund(id));
+    runTx(() => chain.createCampaign(data.goalEth, data.durationSeconds, data.title, data.description), "Campagna creata!");
+  const handleContribute = (id, amount) => runTx(() => chain.contribute(id, amount), "Contributo inviato!");
+  const handleWithdraw = (id) => runTx(() => chain.withdraw(id), "Fondi prelevati con successo!");
+  const handleRefund = (id) => runTx(() => chain.refund(id), "Rimborso ricevuto!");
 
   const active = campaigns.filter((c) => campaignStatus(c) === "active");
   const concluded = campaigns.filter((c) => campaignStatus(c) !== "active");
@@ -155,9 +171,17 @@ export default function App() {
               >
                 Le mie <span className="tab__count">{mine.length}</span>
               </button>
+              <button
+                className={"tab" + (tab === "activity" ? " tab--on" : "")}
+                onClick={() => setTab("activity")}
+              >
+                Attivita <span className="tab__count">{activity.length}</span>
+              </button>
             </nav>
 
-            {loading ? (
+            {tab === "activity" ? (
+              <Activity events={activity} />
+            ) : loading ? (
               <p className="state">Caricamento campagne...</p>
             ) : shown.length === 0 ? (
               <p className="state">
@@ -186,10 +210,7 @@ export default function App() {
         )}
       </main>
 
-      <footer className="footer">
-        <span>Progetto Sicurezza dei Dati</span>
-        <span className="muted">Ethereum &middot; Solidity &middot; React</span>
-      </footer>
+      <Toast toasts={toasts} />
     </div>
   );
 }
