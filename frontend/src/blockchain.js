@@ -115,3 +115,65 @@ export async function refund(id) {
   const tx = await contract.refund(id);
   await tx.wait();
 }
+
+// Legge lo storico delle attività dagli eventi del contratto.
+// Se passi un account, filtra solo le attivita' che lo riguardano.
+export async function loadActivity(account) {
+  const contract = getReadContract();
+
+  // queryFilter legge gli eventi passati registrati nei log della blockchain
+  const [created, contributed, withdrawn, refunded] = await Promise.all([
+    contract.queryFilter(contract.filters.CampaignCreated()),
+    contract.queryFilter(contract.filters.ContributionMade()),
+    contract.queryFilter(contract.filters.FundsWithdrawn()),
+    contract.queryFilter(contract.filters.RefundIssued()),
+  ]);
+
+  const events = [];
+
+  for (const e of created) {
+    events.push({
+      type: "created",
+      id: Number(e.args.id),
+      actor: e.args.creator,
+      title: e.args.title,
+      block: e.blockNumber,
+    });
+  }
+  for (const e of contributed) {
+    events.push({
+      type: "contributed",
+      id: Number(e.args.id),
+      actor: e.args.contributor,
+      amount: e.args.amount,
+      block: e.blockNumber,
+    });
+  }
+  for (const e of withdrawn) {
+    events.push({
+      type: "withdrawn",
+      id: Number(e.args.id),
+      actor: e.args.creator,
+      amount: e.args.amount,
+      block: e.blockNumber,
+    });
+  }
+  for (const e of refunded) {
+    events.push({
+      type: "refunded",
+      id: Number(e.args.id),
+      actor: e.args.contributor,
+      amount: e.args.amount,
+      block: e.blockNumber,
+    });
+  }
+
+  // ordino dal piu' recente al piu' vecchio (per numero di blocco)
+  events.sort((a, b) => b.block - a.block);
+
+  // se richiesto, filtro solo le attivita' dell'account
+  if (account) {
+    return events.filter((e) => e.actor.toLowerCase() === account.toLowerCase());
+  }
+  return events;
+}
